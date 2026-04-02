@@ -66,8 +66,11 @@ async def ask_ai(user_id: int, message: str, history: list,
             except Exception as e:
                 log.error(f"Помилка кодування зображення: {e}")
 
+        from core.design_search import enrich_prompt
+        design_context = enrich_prompt(message or "")
+
         if url:
-            message = f"{message}\n\nРеференс: {url}" if message else f"Референс: {url}"
+            message = f"{message}\n\nРеференс: {url}" if message else f"Референс: {url}" 
 
         if message:
             if len(message) > MAX_MSG_LEN:
