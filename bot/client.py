@@ -147,25 +147,27 @@ async def _process_and_reply(update: Update, user_id: int,
     # Обробляємо відповідь — шукаємо SVG
     result = process_ai_response(reply, base_name=f"samuel_{user_id}")
 
-    # Відправляємо PNG превью якщо є
-    if result["has_visual"] and result["png_path"]:
+    # Відправляємо PNG як media group якщо є кілька
+    if result["has_visual"] and result["png_paths"]:
+        from telegram import InputMediaPhoto
         try:
-            with open(result["png_path"], "rb") as f:
-                await update.message.reply_photo(photo=f, caption="Превью")
+            if len(result["png_paths"]) == 1:
+                name, path = result["png_paths"][0]
+                with open(path, "rb") as f:
+                    await update.message.reply_photo(photo=f, caption=name)
+            else:
+                media = []
+                for i, (name, path) in enumerate(result["png_paths"]):
+                    with open(path, "rb") as f:
+                        media.append(InputMediaPhoto(
+                            media=f.read(),
+                            caption=name if i < 10 else None
+                        ))
+                await update.message.reply_media_group(media=media)
         except Exception as e:
             log.error(f"Помилка відправки PNG: {e}")
 
-    # Відправляємо SVG файл якщо є
-    if result["svg_path"]:
-        try:
-            with open(result["svg_path"], "rb") as f:
-                await update.message.reply_document(
-                    document=f,
-                    filename="samuel_design.svg",
-                    caption="SVG для Illustrator"
-                )
-        except Exception as e:
-            log.error(f"Помилка відправки SVG: {e}")
+    # SVG відправка вимкнена — Ксюша працює з PNG
 
     # Відправляємо текст
     if result["text"]:
