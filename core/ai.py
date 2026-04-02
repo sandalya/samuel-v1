@@ -12,7 +12,7 @@ log = logging.getLogger("core.ai")
 client = anthropic.Anthropic(
     api_key=ANTHROPIC_KEY,
     max_retries=2,
-    timeout=60.0
+    timeout=120.0
 )
 
 MAX_HISTORY = 20
@@ -31,18 +31,31 @@ def build_system_prompt() -> str:
 
 
 def encode_image(image_path: str) -> tuple[str, str]:
+    import io
     path = Path(image_path)
-    suffix = path.suffix.lower()
-    media_types = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-    }
-    media_type = media_types.get(suffix, "image/jpeg")
-    data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
-    return data, media_type
+    try:
+        from PIL import Image
+        img = Image.open(path)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        img.thumbnail((1920, 1920), Image.LANCZOS)
+        buf = io.BytesIO()
+        quality = 85
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        while buf.tell() > 4 * 1024 * 1024 and quality > 30:
+            quality -= 15
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+        log.info(f"Зображення: {buf.tell()/1024:.0f}KB, якість {quality}")
+        return base64.standard_b64encode(buf.getvalue()).decode("utf-8"), "image/jpeg"
+    except ImportError:
+        raw = path.read_bytes()
+        if len(raw) > 4 * 1024 * 1024:
+            raise ValueError("PIL не встановлено і файл завеликий")
+        suffix = path.suffix.lower()
+        media_types = {".jpg":"image/jpeg",".jpeg":"image/jpeg",
+                       ".png":"image/png",".webp":"image/webp"}
+        return base64.standard_b64encode(raw).decode("utf-8"), media_types.get(suffix,"image/jpeg")
 
 
 async def ask_ai(user_id: int, message: str, history: list,
@@ -87,8 +100,14 @@ async def ask_ai(user_id: int, message: str, history: list,
 
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=4000,
-            system=build_system_prompt(),
+            max_tokens=8000,
+            system=[
+                {
+                    "type": "text",
+                    "text": build_system_prompt(),
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ],
             messages=messages
         )
 

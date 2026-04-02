@@ -1,77 +1,95 @@
-"""Рендеринг SVG в PNG для Telegram."""
+"""Рендеринг HTML в PNG для Telegram через wkhtmltoimage."""
 import logging
 import re
 import tempfile
+import subprocess
 from pathlib import Path
 
 log = logging.getLogger("bot.renderer")
 
 
-def extract_all_svgs(text):
+def extract_all_html(text):
+    """Витягує всі HTML блоки з відповіді."""
     results = []
-    pattern = re.compile(r"Variant|variant|\u0412\u0430\u0440\u0456\u0430\u043d\u0442")
-    blocks = re.split(r"\n(?=(?:Variant|\u0412\u0430\u0440\u0456\u0430\u043d\u0442)\s*\d+)", text)
-    
-    for block in blocks:
-        name_match = re.match(r"(?:Variant|\u0412\u0430\u0440\u0456\u0430\u043d\u0442)\s*\d+\s*[\u2014\-]?\s*([^\n]*)", block)
-        name = name_match.group(1).strip() if name_match else "design"
-        
-        svg_match = re.search(r"```svg\s*(<svg[\s\S]*?</svg>)\s*```", block)
-        if not svg_match:
-            svg_match = re.search(r"(<svg[\s\S]*?</svg>)", block)
-        
-        if svg_match:
-            results.append((name, svg_match.group(1)))
-    
+    pattern = re.compile(r"(?:Variant|variant|\u0412\u0430\u0440\u0456\u0430\u043d\u0442)\s*(\d+)\s*[\u2014\-]?\s*([^\n]*)\n.*?```html\s*([\s\S]*?)```", re.IGNORECASE)
+    for match in pattern.finditer(text):
+        num = match.group(1)
+        name = match.group(2).strip() or f"variant_{num}"
+        html = match.group(3).strip()
+        results.append((name, html))
+
     if not results:
-        for match in re.finditer(r"(<svg[\s\S]*?</svg>)", text):
-            results.append(("design", match.group(1)))
-    
+        for i, match in enumerate(re.finditer(r"```html\s*([\s\S]*?)```", text)):
+            results.append((f"variant_{i+1}", match.group(1).strip()))
+
     return results
 
 
-def svg_to_png(svg_content, output_path):
+def html_to_png(html_content: str, output_path: str, width: int = 600) -> bool:
+    """Конвертує HTML в PNG через wkhtmltoimage."""
+    tmp_html = output_path.replace(".png", ".html")
     try:
-        import cairosvg
-        cairosvg.svg2png(bytestring=svg_content.encode("utf-8"), write_to=output_path, scale=2.0)
-        return True
-    except Exception as e:
-        log.error(f"SVG->PNG: {e}")
+        Path(tmp_html).write_text(html_content, encoding="utf-8")
+        result = subprocess.run([
+            "wkhtmltoimage",
+            "--width", str(width),
+            "--quality", "95",
+            "--enable-local-file-access",
+            "--crop-h", "200",
+            "--quiet",
+            tmp_html,
+            output_path
+        ], capture_output=True, timeout=30)
+        if result.returncode == 0 and Path(output_path).exists():
+            log.info(f"PNG збережено: {output_path}")
+            return True
+        log.error(f"wkhtmltoimage помилка: {result.stderr.decode()}")
         return False
-
-
-def save_svg(svg_content, output_path):
-    try:
-        Path(output_path).write_text(svg_content, encoding="utf-8")
-        return True
-    except Exception as e:
-        log.error(f"Save SVG: {e}")
+    except subprocess.TimeoutExpired:
+        log.error("wkhtmltoimage timeout")
         return False
+    except Exception as e:
+        log.error(f"HTML->PNG помилка: {e}")
+        return False
+    finally:
+        try:
+            Path(tmp_html).unlink()
+        except Exception:
+            pass
 
 
 def clean_text(text):
-    text = re.sub(r"```svg[\s\S]*?```", "", text)
-    text = re.sub(r"<svg[\s\S]*?</svg>", "", text)
-    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    import re as _re
+    text = _re.sub("```html[\\s\\S]*?```", "", text)
+    text = _re.sub("\\*\\*([^*]+)\\*\\*", "\\1", text)
+    text = _re.sub("\\n{3,}", "\\n\\n", text)
     return text.strip()
 
 
-def process_ai_response(text, base_name="samuel"):
-    result = {"text": clean_text(text), "svg_paths": [], "png_paths": [], "has_visual": False}
+def process_ai_response(text: str, base_name: str = "samuel") -> dict:
+    """Обробляє відповідь AI — витягує HTML блоки і конвертує в PNG."""
+    result = {
+        "text": clean_text(text),
+        "svg_paths": [],
+        "png_paths": [],
+        "has_visual": False
+    }
+
     tmp_dir = Path(tempfile.gettempdir()) / "samuel"
     tmp_dir.mkdir(exist_ok=True)
-    svgs = extract_all_svgs(text)
-    if not svgs:
+
+    blocks = extract_all_html(text)
+
+    if not blocks:
         return result
-    for i, (name, svg) in enumerate(svgs):
+
+    for i, (name, html) in enumerate(blocks):
         safe = re.sub(r"[^a-zA-Z0-9_]", "_", name)[:30]
-        svg_path = str(tmp_dir / f"{base_name}_{i+1}_{safe}.svg")
         png_path = str(tmp_dir / f"{base_name}_{i+1}_{safe}.png")
-        if save_svg(svg, svg_path):
-            result["svg_paths"].append((name, svg_path))
-        if svg_to_png(svg, png_path):
+
+        if html_to_png(html, png_path):
             result["png_paths"].append((name, png_path))
             result["has_visual"] = True
-    log.info(f"Оброблено {len(svgs)} SVG, {len(result['png_paths'])} PNG")
+
+    log.info(f"Оброблено {len(blocks)} HTML блоків, {len(result['png_paths'])} PNG")
     return result
