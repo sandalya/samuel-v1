@@ -5,3 +5,11 @@ logs/
 *.log
 venv/
 .DS_Store
+memory/images/
+memory/approved/
+memory/style_knowledge.md
+logs/
+*.bak
+bot.pid
+install_image_gen.sh
+fix_image_gen.sh
