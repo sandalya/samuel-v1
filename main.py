@@ -1,5 +1,6 @@
 """Samuel v1 — дизайн-асистент Ксюші."""
 import logging
+from core.lock import acquire_lock, release_lock
 import sys
 import asyncio
 from pathlib import Path
@@ -24,6 +25,7 @@ async def error_handler(update: object, context):
 
 
 def main():
+    acquire_lock()
     if not TELEGRAM_TOKEN:
         log.error("TELEGRAM_TOKEN не встановлено")
         sys.exit(1)
@@ -45,8 +47,14 @@ def main():
     app.add_error_handler(error_handler)
 
     log.info("Polling запущено")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(
+        drop_pending_updates=True,
+        poll_interval=1.0,
+        timeout=20
+    )
 
+
+    release_lock()
 
 if __name__ == "__main__":
     main()

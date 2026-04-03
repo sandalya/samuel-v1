@@ -11,14 +11,12 @@ from telegram.ext import (
     filters, ContextTypes
 )
 from core.config import TELEGRAM_TOKEN, ADMIN_IDS, OWNER_CHAT_ID
-from core.ai import ask_ai, ask_ai_with_image_gen
-from core.learn import analyze_and_save
+from core.ai import ask_ai
 from bot.renderer import process_ai_response
 
 log = logging.getLogger("bot.client")
 
 conversations: dict[int, list] = {}
-learn_mode: set[int] = set()  # user_id які в режимі навчання
 
 # Буфер для групування повідомлень {user_id: {text, images, timer_task}}
 buffers: dict[int, dict] = {}
@@ -124,19 +122,6 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if caption:
         buf["text"] = (buf.get("text", "") + " " + caption).strip()
 
-    if user.id in learn_mode:
-        if buffers[user.id].get("task"):
-            buffers[user.id]["task"].cancel()
-        buffers.pop(user.id, None)
-        await update.message.reply_text("⏳ Аналізую...")
-        try:
-            analysis = await analyze_and_save(tmp_path)
-            await update.message.reply_text(f"✅ Збережено. Ось що я побачив:\n\n{analysis[:1000]}")
-        except Exception as e:
-            log.error(f"learn помилка: {e}")
-            await update.message.reply_text("❌ Помилка аналізу.")
-        return
-
     task = asyncio.create_task(flush_buffer(user.id, update, ctx))
     buf["task"] = task
 
@@ -177,7 +162,7 @@ async def _process_and_reply(update: Update, user_id: int,
 
     await update.message.reply_text("Working on it...")
 
-    reply, gen_image_path = await ask_ai_with_image_gen(
+    reply = await ask_ai(
         user_id=user_id,
         message=message,
         history=history,
@@ -190,7 +175,7 @@ async def _process_and_reply(update: Update, user_id: int,
 
     result = process_ai_response(reply, base_name=f"samuel_{user_id}")
 
-    if result["has_visual"] and result["png_paths"] and not gen_image_path:
+    if result["has_visual"] and result["png_paths"]:
         try:
             if len(result["png_paths"]) == 1:
                 name, path = result["png_paths"][0]
@@ -205,39 +190,15 @@ async def _process_and_reply(update: Update, user_id: int,
         except Exception as e:
             log.error(f"Помилка відправки PNG: {e}")
 
-    if gen_image_path:
-        try:
-            # Прибираємо markdown зображення з тексту перед відправкою
-            import re as _re
-            clean = _re.sub(r'!\[.*?\]\(.*?\)', '', result["text"]).strip()
-            if clean:
-                await update.message.reply_text(clean[:4000])
-            with open(gen_image_path, "rb") as f:
-                await update.message.reply_photo(photo=f, caption="🎨 Згенероване зображення")
-        except Exception as e:
-            log.error(f"Помилка відправки gen зображення: {e}")
-    elif result["text"] and not result["has_visual"]:
+    if result["text"] and not result["has_visual"]:
         text = result["text"][:4000]
         await update.message.reply_text(text)
-
-
-async def cmd_learn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_authorized(user.id):
-        return
-    if user.id in learn_mode:
-        learn_mode.discard(user.id)
-        await update.message.reply_text("🔴 Режим навчання вимкнено.")
-    else:
-        learn_mode.add(user.id)
-        await update.message.reply_text("🟢 Режим навчання увімкнено. Скидай прийняті роботи — я аналізую і запам'ятовую стиль.")
 
 
 def setup_handlers(app: Application):
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("save", cmd_save))
-    app.add_handler(CommandHandler("learn", cmd_learn))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))

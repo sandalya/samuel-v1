@@ -6,7 +6,6 @@ from pathlib import Path
 from core.config import ANTHROPIC_KEY
 from core.prompt import SAMUEL_SYSTEM_PROMPT
 from core.memory import load_memory
-from core.image_gen import generate_image, detect_image_intent
 
 log = logging.getLogger("core.ai")
 
@@ -25,20 +24,10 @@ def optimize_history(history: list) -> list:
 
 
 def build_system_prompt() -> str:
-    from pathlib import Path
     memory = load_memory()
-    base = SAMUEL_SYSTEM_PROMPT
-
-    # Додаємо style knowledge якщо є
-    knowledge_file = Path(__file__).parent.parent / "memory" / "style_knowledge.md"
-    if knowledge_file.exists():
-        knowledge = knowledge_file.read_text(encoding="utf-8")
-        if knowledge.strip():
-            base += f"\n\n## Прийняті роботи — стиль клієнта\n{knowledge[:3000]}"
-
     if memory:
-        base += f"\n\n## Память з попередніх сесій\n{memory}"
-    return base
+        return SAMUEL_SYSTEM_PROMPT + f"\n\n## Память з попередніх сесій\n{memory}"
+    return SAMUEL_SYSTEM_PROMPT
 
 
 def encode_image(image_path: str) -> tuple[str, str]:
@@ -135,23 +124,3 @@ async def ask_ai(user_id: int, message: str, history: list,
     except Exception as e:
         log.error(f"AI помилка: {e}")
         return "Технічна помилка. Спробуй ще раз."
-
-
-async def ask_ai_with_image_gen(user_id: int, message: str, history: list,
-                                 image_path: str = None, url: str = None):
-    is_image_req, style_hint = detect_image_intent(message or "", reference_image_path=image_path)
-
-    if is_image_req:
-        text_reply = await ask_ai(user_id, message, history, image_path, url)
-        gen_prompt = text_reply.split("\n")[0][:300]
-        gen_path, err = await generate_image(
-            prompt=gen_prompt,
-            reference_image_path=image_path,
-            style_hint=style_hint,
-        )
-        if err:
-            return text_reply + f"\n\n⚠️ Генерація не вдалась: {err}", None
-        return text_reply, str(gen_path)
-
-    reply = await ask_ai(user_id, message, history, image_path, url)
-    return reply, None

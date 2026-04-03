@@ -60,9 +60,16 @@ def html_to_png(html_content: str, output_path: str, width: int = 600) -> bool:
 
 def clean_text(text):
     import re as _re
-    text = _re.sub("```html[\\s\\S]*?```", "", text)
-    text = _re.sub("\\*\\*([^*]+)\\*\\*", "\\1", text)
-    text = _re.sub("\\n{3,}", "\\n\\n", text)
+    # прибираємо всі code блоки
+    text = _re.sub(r"```[\w]*[\s\S]*?```", "", text)
+    # прибираємо inline SVG/HTML теги якщо просочились
+    text = _re.sub(r"<svg[\s\S]*?</svg>", "", text)
+    text = _re.sub(r"<!DOCTYPE[\s\S]*?</html>", "", text)
+    # прибираємо markdown зображення
+    text = _re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
+    # прибираємо bold
+    text = _re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = _re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
