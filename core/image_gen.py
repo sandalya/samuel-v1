@@ -123,7 +123,7 @@ async def generate_image(
                 b64_data = block.get("data") or block.get("source", {}).get("data", "")
                 if b64_data:
                     return _save_image(b64_data), ""
-        log.warning(f"Невідомий формат: keys={list(raw_message.keys())}, images={images}")
+        log.warning("Невідомий формат відповіді від OpenRouter")
         return None, "Зображення не знайдено у відповіді моделі"
 
     except httpx.HTTPStatusError as e:
