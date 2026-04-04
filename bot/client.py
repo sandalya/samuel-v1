@@ -261,12 +261,12 @@ async def _process_and_reply(update: Update, user_id: int,
             if len(result["png_paths"]) == 1:
                 name, path = result["png_paths"][0]
                 with open(path, "rb") as f:
-                    await update.message.reply_photo(photo=f, caption=name)
+                    await update.message.reply_photo(photo=f, caption=None)
             else:
                 media = []
                 for i, (name, path) in enumerate(result["png_paths"]):
                     with open(path, "rb") as f:
-                        media.append(InputMediaPhoto(media=f.read(), caption=name if i < 10 else None))
+                        media.append(InputMediaPhoto(media=f.read(), caption=None))
                 await update.message.reply_media_group(media=media)
         except Exception as e:
             log.error(f"Помилка відправки PNG: {e}")
@@ -275,7 +275,7 @@ async def _process_and_reply(update: Update, user_id: int,
         try:
             import re as _re
             clean = _re.sub(r'!\[.*?\]\(.*?\)', '', result["text"]).strip()
-            if clean:
+            if clean and not result["png_paths"] and len(clean) < 200:
                 await update.message.reply_text(clean[:4000])
             with open(gen_image_path, "rb") as f:
                 await update.message.reply_photo(photo=f, caption="🎨 Згенероване зображення")

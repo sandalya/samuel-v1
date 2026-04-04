@@ -123,7 +123,7 @@ async def generate_image(
                 b64_data = block.get("data") or block.get("source", {}).get("data", "")
                 if b64_data:
                     return _save_image(b64_data), ""
-        log.warning("Невідомий формат відповіді від OpenRouter")
+        log.warning(f"Невідомий формат відповіді від OpenRouter: {str(data)[:500]}")
         return None, "Зображення не знайдено у відповіді моделі"
 
     except httpx.HTTPStatusError as e:
@@ -146,13 +146,14 @@ def detect_image_intent(message: str, reference_image_path: str = None) -> tuple
     msg = message.lower()
     triggers = [
         "намалюй", "згенеруй", "створи зображення", "зроби картинку",
-        "generate image", "draw me", "зроби фото", "реалістичне фото", "реалістичн",
+        "generate image", "generate", "draw me", "зроби фото", "реалістичне фото", "реалістичн",
         "мудборд", "moodboard", "ілюстрація", "render", "візуалізуй",
         "покажи як виглядає", "color variation", "colour variation", "варіац",
         "в іншому кольорі", "recolor", "remake", "зроби схожий", "same style",
+        "progress bar", "icon", "badge", "asset", "банер", "banner",
     ]
     has_reference = reference_image_path is not None
-    is_image = any(t in msg for t in triggers) or has_reference
+    is_image = any(t in msg for t in triggers)
     if not is_image:
         return False, None
 

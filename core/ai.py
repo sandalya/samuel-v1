@@ -16,7 +16,7 @@ client = anthropic.Anthropic(
     timeout=120.0
 )
 
-MAX_HISTORY = 20
+MAX_HISTORY = 8
 MAX_MSG_LEN = 4000
 
 
@@ -34,7 +34,7 @@ def build_system_prompt() -> str:
     if knowledge_file.exists():
         knowledge = knowledge_file.read_text(encoding="utf-8")
         if knowledge.strip():
-            base += f"\n\n## Прийняті роботи — стиль клієнта\n{knowledge[:3000]}"
+            base += f"\n\n## Прийняті роботи — стиль клієнта\n{knowledge[-12000:]}"
 
     if memory:
         base += f"\n\n## Память з попередніх сесій\n{memory}"
@@ -111,7 +111,7 @@ async def ask_ai(user_id: int, message: str, history: list,
 
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=8000,
+            max_tokens=16000,
             system=[
                 {
                     "type": "text",
@@ -139,19 +139,17 @@ async def ask_ai(user_id: int, message: str, history: list,
 
 async def ask_ai_with_image_gen(user_id: int, message: str, history: list,
                                  image_path: str = None, url: str = None):
-    is_image_req, style_hint = detect_image_intent(message or "", reference_image_path=image_path)
-
-    if is_image_req:
-        text_reply = await ask_ai(user_id, message, history, image_path, url)
-        gen_prompt = text_reply.split("\n")[0][:300]
-        gen_path, err = await generate_image(
-            prompt=gen_prompt,
-            reference_image_path=image_path,
-            style_hint=style_hint,
-        )
-        if err:
-            return text_reply + f"\n\n⚠️ Генерація не вдалась: {err}", None
-        return text_reply, str(gen_path)
-
     reply = await ask_ai(user_id, message, history, image_path, url)
-    return reply, None
+    if '```html' in reply:
+        return reply, None
+    # Claude сформував відповідь — беремо її як промпт для Gemini
+    gen_prompt = reply.strip()[:800]
+    gen_path, err = await generate_image(
+        prompt=gen_prompt,
+        reference_image_path=image_path,
+        style_hint=None,
+    )
+    if err:
+        return reply, None
+    return reply, str(gen_path)
+

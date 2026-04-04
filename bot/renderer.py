@@ -11,7 +11,7 @@ log = logging.getLogger("bot.renderer")
 def extract_all_html(text: str) -> list[tuple[str, str]]:
     results = []
 
-    block_pattern = re.compile(r"```html\s*([\s\S]*?)```", re.IGNORECASE)
+    block_pattern = re.compile(r"```html\s*([\s\S]*?)(?:```|\Z)", re.IGNORECASE)
 
     title_pattern = re.compile(
         r"(?:"
