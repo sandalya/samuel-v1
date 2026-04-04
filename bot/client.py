@@ -18,11 +18,10 @@ from bot.renderer import process_ai_response
 log = logging.getLogger("bot.client")
 
 conversations: dict[int, list] = {}
-learn_mode: set[int] = set()  # user_id які в режимі навчання
+learn_mode: set[int] = set()
 
-# Буфер для групування повідомлень {user_id: {text, images, timer_task}}
 buffers: dict[int, dict] = {}
-BUFFER_WAIT = 3.5  # секунди очікування
+BUFFER_WAIT = 3.5
 
 
 def is_authorized(user_id: int) -> bool:
@@ -30,19 +29,34 @@ def is_authorized(user_id: int) -> bool:
 
 
 async def flush_buffer(user_id: int, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Обробляє зібраний буфер після паузи."""
     await asyncio.sleep(BUFFER_WAIT)
-
     buf = buffers.pop(user_id, None)
     if not buf:
         return
-
     message = buf.get("text", "")
     image_path = buf.get("image_path")
     url_match = re.search(r"https?://\S+", message) if message else None
     url = url_match.group(0) if url_match else None
-
     await _process_and_reply(update, user_id, message, image_path=image_path, url=url)
+
+
+def _cancel_buffer(user_id: int):
+    if user_id in buffers and buffers[user_id].get("task"):
+        buffers[user_id]["task"].cancel()
+
+
+async def _add_to_buffer_and_schedule(user_id: int, update: Update,
+                                       ctx: ContextTypes.DEFAULT_TYPE,
+                                       text: str = "", image_path: str = None):
+    _cancel_buffer(user_id)
+    buf = buffers.setdefault(user_id, {})
+    if text:
+        buf["text"] = (buf.get("text", "") + " " + text).strip()
+    if image_path:
+        buf["image_path"] = image_path
+    buf["update"] = update
+    task = asyncio.create_task(flush_buffer(user_id, update, ctx))
+    buf["task"] = task
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -80,25 +94,28 @@ async def cmd_save(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Памʼять збережено.")
 
 
+async def cmd_learn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_authorized(user.id):
+        return
+    if user.id in learn_mode:
+        learn_mode.discard(user.id)
+        await update.message.reply_text("🔴 Режим навчання вимкнено.")
+    else:
+        learn_mode.add(user.id)
+        await update.message.reply_text("🟢 Режим навчання увімкнено. Скидай прийняті роботи — аналізую і запамʼятовую стиль.")
+
+
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not is_authorized(user.id):
         return
-
-    text = update.message.text or ""
-
-    # Скасовуємо попередній таймер якщо є
-    if user.id in buffers and buffers[user.id].get("task"):
-        buffers[user.id]["task"].cancel()
-
-    # Додаємо текст в буфер
-    buf = buffers.setdefault(user.id, {})
-    buf["text"] = (buf.get("text", "") + " " + text).strip()
-    buf["update"] = update
-
-    # Запускаємо таймер
-    task = asyncio.create_task(flush_buffer(user.id, update, ctx))
-    buf["task"] = task
+    text = update.message.text or update.message.caption or ""
+    # Якщо форвард — додаємо контекст звідки
+    forward_info = _get_forward_context(update)
+    if forward_info:
+        text = f"{forward_info}\n{text}".strip()
+    await _add_to_buffer_and_schedule(user.id, update, ctx, text=text)
 
 
 async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -107,38 +124,28 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     caption = update.message.caption or ""
+    forward_info = _get_forward_context(update)
+    if forward_info:
+        caption = f"{forward_info}\n{caption}".strip()
 
-    # Завантажуємо фото
     photo = update.message.photo[-1]
     file = await ctx.bot.get_file(photo.file_id)
     tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_in_{user.id}.jpg")
     await file.download_to_drive(tmp_path)
 
-    # Скасовуємо попередній таймер
-    if user.id in buffers and buffers[user.id].get("task"):
-        buffers[user.id]["task"].cancel()
-
-    buf = buffers.setdefault(user.id, {})
-    buf["image_path"] = tmp_path
-    buf["update"] = update
-    if caption:
-        buf["text"] = (buf.get("text", "") + " " + caption).strip()
-
     if user.id in learn_mode:
-        if buffers[user.id].get("task"):
-            buffers[user.id]["task"].cancel()
+        _cancel_buffer(user.id)
         buffers.pop(user.id, None)
         await update.message.reply_text("⏳ Аналізую...")
         try:
             analysis = await analyze_and_save(tmp_path)
-            await update.message.reply_text(f"✅ Збережено. Ось що я побачив:\n\n{analysis[:1000]}")
+            await update.message.reply_text(f"✅ Збережено.\n\n{analysis[:1000]}")
         except Exception as e:
             log.error(f"learn помилка: {e}")
             await update.message.reply_text("❌ Помилка аналізу.")
         return
 
-    task = asyncio.create_task(flush_buffer(user.id, update, ctx))
-    buf["task"] = task
+    await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=tmp_path)
 
 
 async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -147,34 +154,93 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     doc = update.message.document
-    if not doc.mime_type or not doc.mime_type.startswith("image/"):
-        await update.message.reply_text("Надсилай зображення або текст.")
-        return
-
     caption = update.message.caption or ""
-    file = await ctx.bot.get_file(doc.file_id)
-    suffix = Path(doc.file_name).suffix if doc.file_name else ".png"
-    tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_doc_{user.id}{suffix}")
+    forward_info = _get_forward_context(update)
+    if forward_info:
+        caption = f"{forward_info}\n{caption}".strip()
+
+    # Приймаємо зображення і PDF
+    if doc.mime_type and doc.mime_type.startswith("image/"):
+        file = await ctx.bot.get_file(doc.file_id)
+        suffix = Path(doc.file_name).suffix if doc.file_name else ".png"
+        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_doc_{user.id}{suffix}")
+        await file.download_to_drive(tmp_path)
+        await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=tmp_path)
+    else:
+        # Не-зображення — передаємо як текст з описом
+        file_desc = f"[Файл: {doc.file_name or 'без назви'}, тип: {doc.mime_type or 'невідомий'}]"
+        text = f"{file_desc}\n{caption}".strip()
+        await _add_to_buffer_and_schedule(user.id, update, ctx, text=text)
+
+
+async def handle_sticker(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Стікери — конвертуємо в зображення."""
+    user = update.effective_user
+    if not is_authorized(user.id):
+        return
+    sticker = update.message.sticker
+    file = await ctx.bot.get_file(sticker.file_id)
+    suffix = ".webp"
+    tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_sticker_{user.id}{suffix}")
     await file.download_to_drive(tmp_path)
+    # Конвертуємо webp → jpg для Claude
+    try:
+        from PIL import Image
+        img = Image.open(tmp_path).convert("RGB")
+        jpg_path = tmp_path.replace(".webp", ".jpg")
+        img.save(jpg_path, "JPEG", quality=90)
+        tmp_path = jpg_path
+    except Exception:
+        pass
+    await _add_to_buffer_and_schedule(user.id, update, ctx,
+                                       text="[Стікер]", image_path=tmp_path)
 
-    if user.id in buffers and buffers[user.id].get("task"):
-        buffers[user.id]["task"].cancel()
 
-    buf = buffers.setdefault(user.id, {})
-    buf["image_path"] = tmp_path
-    buf["update"] = update
-    if caption:
-        buf["text"] = (buf.get("text", "") + " " + caption).strip()
+async def handle_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Відео — поки тільки повідомляємо."""
+    user = update.effective_user
+    if not is_authorized(user.id):
+        return
+    caption = update.message.caption or ""
+    text = f"[Відео]{(' — ' + caption) if caption else ''}"
+    await _add_to_buffer_and_schedule(user.id, update, ctx, text=text)
 
-    task = asyncio.create_task(flush_buffer(user.id, update, ctx))
-    buf["task"] = task
+
+async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Голосові — поки не підтримуємо."""
+    user = update.effective_user
+    if not is_authorized(user.id):
+        return
+    await update.message.reply_text("Голосові поки не підтримуються.")
+
+
+def _get_forward_context(update: Update) -> str:
+    """Витягує контекст форварду якщо є."""
+    msg = update.message
+    if not msg:
+        return ""
+    origin = getattr(msg, "forward_origin", None)
+    if not origin:
+        return ""
+    origin_type = getattr(origin, "type", "")
+    if origin_type == "channel":
+        chat = getattr(origin, "chat", None)
+        title = getattr(chat, "title", "") if chat else ""
+        return f"[Форвард з каналу: {title}]" if title else "[Форвард з каналу]"
+    elif origin_type == "user":
+        fwd_user = getattr(origin, "sender_user", None)
+        name = getattr(fwd_user, "full_name", "") if fwd_user else ""
+        return f"[Форвард від: {name}]" if name else "[Форвард]"
+    elif origin_type == "hidden_user":
+        name = getattr(origin, "sender_user_name", "")
+        return f"[Форвард від: {name}]" if name else "[Форвард]"
+    return "[Форвард]"
 
 
 async def _process_and_reply(update: Update, user_id: int,
                               message: str, image_path: str = None,
                               url: str = None):
     history = conversations.setdefault(user_id, [])
-
     await update.message.reply_text("Working on it...")
 
     reply, gen_image_path = await ask_ai_with_image_gen(
@@ -207,7 +273,6 @@ async def _process_and_reply(update: Update, user_id: int,
 
     if gen_image_path:
         try:
-            # Прибираємо markdown зображення з тексту перед відправкою
             import re as _re
             clean = _re.sub(r'!\[.*?\]\(.*?\)', '', result["text"]).strip()
             if clean:
@@ -217,20 +282,7 @@ async def _process_and_reply(update: Update, user_id: int,
         except Exception as e:
             log.error(f"Помилка відправки gen зображення: {e}")
     elif result["text"] and not result["has_visual"]:
-        text = result["text"][:4000]
-        await update.message.reply_text(text)
-
-
-async def cmd_learn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_authorized(user.id):
-        return
-    if user.id in learn_mode:
-        learn_mode.discard(user.id)
-        await update.message.reply_text("🔴 Режим навчання вимкнено.")
-    else:
-        learn_mode.add(user.id)
-        await update.message.reply_text("🟢 Режим навчання увімкнено. Скидай прийняті роботи — я аналізую і запам'ятовую стиль.")
+        await update.message.reply_text(result["text"][:4000])
 
 
 def setup_handlers(app: Application):
@@ -240,5 +292,8 @@ def setup_handlers(app: Application):
     app.add_handler(CommandHandler("learn", cmd_learn))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_handler(MessageHandler(filters.Sticker.ALL, handle_sticker))
+    app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE, handle_video))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     log.info("Handlers налаштовано")
