@@ -117,8 +117,32 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     forward_info = _get_forward_context(update)
     if forward_info:
         text = f"{forward_info}\n{text}".strip()
-    await _add_to_buffer_and_schedule(user.id, update, ctx, text=text)
+    reply_image = await _get_reply_image(update, ctx, user.id)
+    await _add_to_buffer_and_schedule(user.id, update, ctx, text=text, image_path=reply_image)
 
+
+async def _get_reply_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user_id: int) -> str | None:
+    """Витягує зображення з reply_to_message якщо є."""
+    reply = update.message.reply_to_message
+    if not reply:
+        return None
+    # reply на фото
+    if reply.photo:
+        photo = reply.photo[-1]
+        file = await ctx.bot.get_file(photo.file_id)
+        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_reply_{user_id}.jpg")
+        await file.download_to_drive(tmp_path)
+        log.info(f"Reply image завантажено: {tmp_path}")
+        return tmp_path
+    # reply на документ-зображення
+    if reply.document and reply.document.mime_type and reply.document.mime_type.startswith("image/"):
+        file = await ctx.bot.get_file(reply.document.file_id)
+        suffix = Path(reply.document.file_name).suffix if reply.document.file_name else ".png"
+        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_reply_{user_id}{suffix}")
+        await file.download_to_drive(tmp_path)
+        log.info(f"Reply document image завантажено: {tmp_path}")
+        return tmp_path
+    return None
 
 async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
