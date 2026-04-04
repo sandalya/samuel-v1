@@ -5,7 +5,7 @@ import anthropic
 from pathlib import Path
 from core.config import ANTHROPIC_KEY
 from core.prompt import SAMUEL_SYSTEM_PROMPT
-from core.memory import load_memory
+from core.memory import load_memory, load_context
 from core.image_gen import generate_image, detect_image_intent
 
 log = logging.getLogger("core.ai")
@@ -26,7 +26,7 @@ def optimize_history(history: list) -> list:
 
 def build_system_prompt() -> str:
     from pathlib import Path
-    memory = load_memory()
+    context = load_context()
     base = SAMUEL_SYSTEM_PROMPT
 
     # Додаємо style knowledge якщо є
@@ -34,10 +34,10 @@ def build_system_prompt() -> str:
     if knowledge_file.exists():
         knowledge = knowledge_file.read_text(encoding="utf-8")
         if knowledge.strip():
-            base += f"\n\n## Прийняті роботи — стиль клієнта\n{knowledge[-12000:]}"
+            base += f"\n\n## Прийняті роботи — стиль клієнта\n{knowledge[-8000:]}"
 
-    if memory:
-        base += f"\n\n## Память з попередніх сесій\n{memory}"
+    if context:
+        base += f"\n\n## Контекст роботи з Ксюшею\n{context}"
     return base
 
 
@@ -136,6 +136,54 @@ async def ask_ai(user_id: int, message: str, history: list,
         log.error(f"AI помилка: {e}")
         return "Технічна помилка. Спробуй ще раз."
 
+
+async def summarize_session(history: list, current_context: str) -> str:
+    """Робить rolling summary сесії і повертає оновлений context."""
+    if not history:
+        return current_context
+    history_text = "
+".join([
+        f"{m['role'].upper()}: {m['content'][:200]}"
+        for m in history[-20:]
+    ])
+    prompt = f"""Ти оновлюєш rolling context для дизайн-асистента Семюеля.
+
+Поточний context:
+{current_context or "(порожній)"}
+
+Діалог цієї сесії:
+{history_text}
+
+Перепиши context.md — максимум 1500 символів. Структура:
+## Ксюша
+(хто вона, як працює, ключові деталі)
+
+## Активний проєкт
+(що зараз робимо, статус, важливі деталі)
+
+## Патерни роботи
+(що приймає, що відхиляє, типові запити, стиль спілкування)
+
+## Остання сесія
+(коротко що робили, що вийшло)
+
+Зберігай важливе, викидай застаріле. Тільки факти, без води."""
+
+    try:
+        from anthropic import AsyncAnthropic
+        from core.config import ANTHROPIC_KEY
+        client = AsyncAnthropic(api_key=ANTHROPIC_KEY)
+        resp = await client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        result = resp.content[0].text.strip()
+        log.info("Session summary готовий")
+        return result
+    except Exception as e:
+        log.error(f"summarize_session помилка: {e}")
+        return current_context
 
 async def ask_ai_with_image_gen(user_id: int, message: str, history: list,
                                  image_path: str = None, url: str = None):

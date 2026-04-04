@@ -11,13 +11,15 @@ from telegram.ext import (
     filters, ContextTypes
 )
 from core.config import TELEGRAM_TOKEN, ADMIN_IDS, OWNER_CHAT_ID
-from core.ai import ask_ai, ask_ai_with_image_gen
+from core.ai import ask_ai, ask_ai_with_image_gen, summarize_session
+import time
 from core.learn import analyze_and_save
 from bot.renderer import process_ai_response
 
 log = logging.getLogger("bot.client")
 
 conversations: dict[int, list] = {}
+last_activity: dict[int, float] = {}
 learn_mode: set[int] = set()
 
 buffers: dict[int, dict] = {}
@@ -237,9 +239,24 @@ def _get_forward_context(update: Update) -> str:
     return "[Форвард]"
 
 
+async def _maybe_summarize(user_id: int):
+    """Якщо сесія завершена (history повний + пауза > 1год) — робимо summary і clear."""
+    history = conversations.get(user_id, [])
+    last = last_activity.get(user_id, 0)
+    if len(history) >= 8 and (time.time() - last) > 3600:
+        from core.memory import load_context, save_context
+        log.info(f"Auto-summary для {user_id}")
+        current = load_context()
+        new_context = await summarize_session(history, current)
+        save_context(new_context)
+        conversations.pop(user_id, None)
+        log.info(f"History скинуто після summary")
+
 async def _process_and_reply(update: Update, user_id: int,
                               message: str, image_path: str = None,
                               url: str = None):
+    await _maybe_summarize(user_id)
+    last_activity[user_id] = time.time()
     history = conversations.setdefault(user_id, [])
     await update.message.reply_text("Working on it...")
 
