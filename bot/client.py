@@ -11,7 +11,7 @@ from telegram.ext import (
     filters, ContextTypes
 )
 from core.config import TELEGRAM_TOKEN, ADMIN_IDS, OWNER_CHAT_ID
-from core.ai import ask_ai, ask_ai_with_image_gen, summarize_session
+from core.ai import ask_ai_with_image_gen, summarize_session
 import time
 from core.learn import analyze_and_save
 from bot.renderer import process_ai_response
@@ -96,6 +96,15 @@ async def cmd_save(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Памʼять збережено.")
 
 
+async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_authorized(user.id):
+        return
+    from core.token_tracker import format_stats
+    text = format_stats(days=7)
+    await update.message.reply_text(text)
+
+
 async def cmd_learn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not is_authorized(user.id):
@@ -171,7 +180,9 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Помилка аналізу.")
         return
 
-    await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=tmp_path)
+    reply_image = await _get_reply_image(update, ctx, user.id)
+    final_image = reply_image or tmp_path
+    await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=final_image)
 
 
 async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -191,7 +202,9 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         suffix = Path(doc.file_name).suffix if doc.file_name else ".png"
         tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_doc_{user.id}{suffix}")
         await file.download_to_drive(tmp_path)
-        await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=tmp_path)
+        reply_image = await _get_reply_image(update, ctx, user.id)
+        final_image = reply_image or tmp_path
+        await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=final_image)
     else:
         # Не-зображення — передаємо як текст з описом
         file_desc = f"[Файл: {doc.file_name or 'без назви'}, тип: {doc.mime_type or 'невідомий'}]"
@@ -331,6 +344,7 @@ def setup_handlers(app: Application):
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("save", cmd_save))
     app.add_handler(CommandHandler("learn", cmd_learn))
+    app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
