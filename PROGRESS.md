@@ -109,3 +109,27 @@
 - bot/renderer.py — HTML → PNG, fallback regex
 - memory/context.md — rolling context про Ксюшу (auto-updated)
 - memory/style_knowledge.md — база прийнятих стилів (останні 8000 символів в промпті)
+
+---
+
+## Сесія 2026-04-07
+
+### Зроблено
+
+**Typing indicator**
+- Прибрано "Working on it..." — замінено на Telegram typing action
+- `_keep_typing()` loop кожні 4с поки бот думає
+- Передано `ctx` в `_process_and_reply`
+
+**Image generation — композиція**
+- `gen_prompt` збільшено з 800 до 3500 символів
+- Референс більше не передається в Gemini — Claude описує стиль текстом, Gemini створює оригінальну композицію
+- Заборона тексту/логотипів в промпті (no text, no signs, no logos)
+- Стандартний розмір 1920x1080px якщо не вказано інше
+- Промпт записується в /tmp/last_gen_prompt.txt для дебагу
+- Системний промпт: дизайнерська воля замість жорстких правил композиції
+
+### Результат
+- Композиції стали різноманітнішими і не копіюють референс
+- Typing indicator працює
+- Текст більше не з'являється в зображеннях

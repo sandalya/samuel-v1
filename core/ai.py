@@ -235,10 +235,20 @@ async def ask_ai_with_image_gen(user_id: int, message: str, history: list,
         log.info("track: done")
         return reply, None
 
-    gen_prompt = reply.strip()[:800]
+    # Очищаємо промпт від можливих префіксів які Claude може написати
+    log.info(f"DEBUG reply start: {reply[:200]}")
+    gen_prompt = reply.strip()
+    # Прибираємо markdown якщо Claude раптом загорнув
+    if gen_prompt.startswith("```"):
+        lines = gen_prompt.split("\n")
+        gen_prompt = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    gen_prompt = gen_prompt[:2000]  # збільшено з 800 до 2000
+    log.info(f"FULL_PROMPT: {gen_prompt}")
+    # Не передаємо референс якщо Claude вже описав стиль в промпті
+    # (щоб Gemini не копіював композицію, а створював оригінальну)
     gen_path, err = await generate_image(
         prompt=gen_prompt,
-        reference_image_path=image_path,
+        reference_image_path=None,
         style_hint=None,
     )
     if err:

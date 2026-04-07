@@ -7,16 +7,21 @@
 
 ## Активний проєкт
 - **poker_ruletka** — ігровий інтерфейс (покер/рулетка)
-- Платформа і стек: уточнити
-- Стиль: casino/gaming, dark background, 3D render assets
+- Розробка gambling-themed assets
+- Стиль: темно-синя гама (#080d1a, #0d1525), 3D render, металічні матеріали
+- Розмір: 1920×1080px для backgrounds
+- Assets: рулетка, покерні карти, фішки
 
 ## Патерни роботи
 - Надсилає референси через forward з іншого чату
-- Просить 5 варіантів за замовчуванням
+- Просить варіації (3-5 за замовчуванням)
 - Реалістичні/3D assets → Gemini, UI компоненти → HTML
 - Приймає роботи через /learn — база в style_knowledge.md
+- Типові запити: "зроби варіацію", "більш об'ємним", "розкидай навколо"
 
 ## Остання сесія
-- Налаштували image gen pipeline: Claude формує промпт → Gemini генерує
-- Progress bar 5 варіантів × 3 фази працює коректно
-- Додано rolling summary і auto-clear history
+- Працювала з колекцією gambling assets: рулетка, покерні карти, фішки
+- Створила композиції з розкиданими об'єктами на темно-синьому фоні
+- Останній запит: красивий background з casino об'єктами scattered around
+- Фінальний стиль: photorealistic 3D render, radial gradient background (#080d1a → #0d1a35), atmospheric depth з blue volumetric lighting
+- Еволюція: окремі об'єкти → scattered композиція → atmospheric background

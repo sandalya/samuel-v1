@@ -22,6 +22,34 @@ conversations: dict[int, list] = {}
 last_activity: dict[int, float] = {}
 learn_mode: set[int] = set()
 
+
+ALPHA_DIRECT_TRIGGERS = [
+    "вирізати фон", "видалити фон", "без фону", "прозор",
+    "remove background", "remove bg", "transparent background",
+    "png with alpha", "png без фону",
+]
+
+def _is_alpha_request(text: str) -> bool:
+    t = text.lower()
+    return any(tr in t for tr in ALPHA_DIRECT_TRIGGERS)
+
+async def _handle_direct_rembg(update, image_path: str):
+    """Пряме видалення фону з готового зображення через rembg."""
+    from core.image_gen import _remove_background
+    from pathlib import Path
+    await update.message.reply_text("⏳ Видаляю фон...")
+    try:
+        result = _remove_background(Path(image_path))
+        with open(result, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename="no_bg.png",
+                caption="PNG з прозорим фоном"
+            )
+    except Exception as e:
+        log.error(f"direct rembg error: {e}")
+        await update.message.reply_text("Помилка видалення фону.")
+
 buffers: dict[int, dict] = {}
 BUFFER_WAIT = 3.5
 
@@ -39,7 +67,11 @@ async def flush_buffer(user_id: int, update: Update, ctx: ContextTypes.DEFAULT_T
     image_path = buf.get("image_path")
     url_match = re.search(r"https?://\S+", message) if message else None
     url = url_match.group(0) if url_match else None
-    await _process_and_reply(update, user_id, message, image_path=image_path, url=url)
+    # Пряме видалення фону якщо є зображення + alpha trigger
+    if image_path and _is_alpha_request(message or ""):
+        await _handle_direct_rembg(update, image_path)
+        return
+    await _process_and_reply(update, ctx, user_id, message, image_path=image_path, url=url)
 
 
 def _cancel_buffer(user_id: int):
@@ -66,7 +98,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(user.id):
         await update.message.reply_text("Немає доступу.")
         return
-    await update.message.reply_text("Семюель готовий.\n\nНадсилай текст, скріни або посилання — зроблю.")
+    await update.message.reply_text("Еббі готова.\n\nНадсилай текст, скріни або посилання — зроблю.")
 
 
 async def cmd_clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -289,21 +321,33 @@ async def _maybe_summarize(user_id: int):
         conversations.pop(user_id, None)
         log.info(f"History скинуто після summary")
 
-async def _process_and_reply(update: Update, user_id: int,
+async def _process_and_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user_id: int,
                               message: str, image_path: str = None,
                               url: str = None):
     await _maybe_summarize(user_id)
     last_activity[user_id] = time.time()
     history = conversations.setdefault(user_id, [])
-    await update.message.reply_text("Working on it...")
-
-    reply, gen_image_path = await ask_ai_with_image_gen(
-        user_id=user_id,
-        message=message,
-        history=history,
-        image_path=image_path,
-        url=url
-    )
+    stop_typing = [False]
+    async def _keep_typing():
+        while not stop_typing[0]:
+            try:
+                await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+                log.info("typing sent")
+            except Exception as e:
+                log.error(f"typing error: {e}")
+            await asyncio.sleep(4)
+    typing_task = asyncio.create_task(_keep_typing())
+    try:
+        reply, gen_image_path = await ask_ai_with_image_gen(
+            user_id=user_id,
+            message=message,
+            history=history,
+            image_path=image_path,
+            url=url
+        )
+    finally:
+        stop_typing[0] = True
+        typing_task.cancel()
 
     history.append({"role": "user", "content": f"{'[image] ' if image_path else ''}{message}"})
     history.append({"role": "assistant", "content": reply})
