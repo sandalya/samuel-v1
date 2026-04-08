@@ -46,6 +46,9 @@ def main():
     setup_handlers(app)
     app.add_error_handler(error_handler)
 
+    # Перевірка витрат раз на 3 дні
+
+
     log.info("Polling запущено")
     app.run_polling(
         drop_pending_updates=True,

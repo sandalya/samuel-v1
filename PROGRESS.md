@@ -75,7 +75,7 @@
 Стек:
 - python-telegram-bot 21
 - Anthropic Claude Sonnet (основний AI + vision)
-- Gemini Flash через OpenRouter (google/gemini-3.1-flash-image-preview)
+- Gemini Flash напряму Google API (gemini-3.1-flash-image-preview, google-genai SDK)
 - wkhtmltoimage (HTML → PNG рендер)
 - Systemd сервіс: samuel-v1.service
 
@@ -86,7 +86,10 @@
 Що працює:
 - Telegram bot (polling, buffer 3.5s)
 - Claude HTML → PNG через wkhtmltoimage (всі варіанти в одному блоці)
-- Gemini image generation через OpenRouter
+- Gemini image generation напряму через Google API (google-genai SDK)
+- Multi-image: альбом як документи → Еббі бачить обидва фото, розуміє "перше"/"друге"
+- Характер Еббі на основі Abby Sciuto (NCIS)
+- Реальний трекінг токенів включно з Gemini і summarize_session
 - /learn режим → memory/style_knowledge.md (63KB, ~30 банерів)
 - Rolling context: memory/context.md (auto-summary після 1год паузи + повний history)
 - Reply на зображення — Ксюша робить reply → Сем бере як референс
@@ -94,10 +97,9 @@
 - Маршрутизація: є ```html → wkhtmltoimage, немає → Gemini
 
 Що треба зробити (в порядку пріоритету):
-1. Per-project memory (/project poker_ruletka)
-2. Підтягнути голос Семюеля в промпті
-3. /scale команда для якості PNG
-4. Auto-switch Haiku/Sonnet
+1. /scale команда для якості PNG
+2. Голос Еббі — фінальне налаштування після фідбеку Ксюші
+3. Очистити .bak файли і debug логи з репо
 
 Ключові файли:
 - core/ai.py — Claude клієнт, ask_ai_with_image_gen, summarize_session, MAX_HISTORY=8, max_tokens=16000
@@ -133,3 +135,51 @@
 - Композиції стали різноманітнішими і не копіюють референс
 - Typing indicator працює
 - Текст більше не з'являється в зображеннях
+
+---
+
+## Сесія 2026-04-08
+
+### Зроблено
+
+**Міграція Gemini: OpenRouter → прямий Google API**
+- Підключено `google-genai` SDK напряму, без OpenRouter
+- Модель: `gemini-3.1-flash-image-preview` (Nano Banana 2)
+- Реальний usage тепер читається з `response.usage_metadata`
+- OpenRouter більше не потрібен — економія на комісії
+
+**Трекінг токенів (token_tracker.py)**
+- Виправлено: `generate_image` тепер повертає реальні `prompt_tokens` і `completion_tokens`
+- Виправлено: `summarize_session` тепер теж трекується (result_type="summary")
+- Виправлено: всі error returns в `image_gen.py` повертають tuple з 4 елементів
+
+**Multi-image підтримка**
+- Буфер тепер збирає кілька фото з одного `media_group_id`
+- Фото нумеруються: [Фото 1], [Фото 2] — Ксюша може звертатись по номеру в тексті
+- `handle_photo` і `handle_document` підтримують media_group
+- Унікальні імена файлів через timestamp (більше немає перезапису)
+- `_get_reply_images` — окрема функція для reply на альбом
+- Renderer отримує `image_paths` і вбудовує base64 для колажів
+- Обмеження Telegram: при reply на альбом доступне тільки перше фото — workaround: слати альбом як документи (Send as documents + Group items)
+
+**Характер Еббі (prompt.py)**
+- Додано розділ "Характер" на основі персонажа Abby Sciuto з серіалу NCIS
+- Тепла, енергійна, впевнена — "найщасливіший гот якого ти зустрінеш"
+- Може вигукнути "Є!" або "О, цікаво" — рідко і до місця
+- Без підлабузництва, захищає свою думку
+
+**Інше**
+- Job queue balance_check видалено — OpenRouter більше не використовується
+- `/stats` показує реальні витрати з token_log.jsonl
+- Додано інструкцію про нумерацію фото в промпт
+
+### Архітектурні рішення
+- Gemini напряму через Google API — дешевше і простіше
+- Multi-image: media_group_id як ключ для групування в буфері
+- Колаж з фото: renderer замінює photo1.jpg → base64 (для текстових запитів — Claude бачить обидва фото і розуміє "перше"/"друге")
+
+### Наступна сесія
+
+- [ ] Голос Еббі — фінальне налаштування після фідбеку Ксюші
+- [ ] /scale команда для якості PNG
+- [ ] Очистити .bak файли і debug логи з репо

@@ -103,28 +103,44 @@ def encode_image(image_path: str) -> tuple[str, str]:
 
 
 async def ask_ai(user_id: int, message: str, history: list,
-                 image_path: str = None, url: str = None) -> str:
+                 image_path: str = None, url: str = None,
+                 image_paths: list = None) -> str:
     try:
         optimized = optimize_history(history)
         content = []
 
-        if image_path:
+        # Нормалізуємо список зображень
+        all_images = image_paths if image_paths else ([image_path] if image_path else [])
+        all_images = [p for p in all_images if p]
+
+        if len(all_images) > 1:
+            # Кілька зображень — додаємо з нумерацією
+            for i, img_path in enumerate(all_images, 1):
+                try:
+                    data, media_type = encode_image(img_path)
+                    content.append({"type": "text", "text": f"[Фото {i}]"})
+                    content.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": data}
+                    })
+                    log.info(f"Зображення {i}/{len(all_images)} додано: {img_path}")
+                except Exception as e:
+                    log.error(f"Помилка кодування зображення {i}: {e}")
+        elif all_images:
             try:
-                data, media_type = encode_image(image_path)
+                data, media_type = encode_image(all_images[0])
                 content.append({
                     "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": media_type,
-                        "data": data
-                    }
+                    "source": {"type": "base64", "media_type": media_type, "data": data}
                 })
-                log.info(f"Зображення додано: {image_path}")
+                log.info(f"Зображення додано: {all_images[0]}")
             except Exception as e:
                 log.error(f"Помилка кодування зображення: {e}")
 
         from core.design_search import enrich_prompt
         design_context = enrich_prompt(message or "")
+
+
 
         if url:
             message = f"{message}\n\nРеференс: {url}" if message else f"Референс: {url}" 
@@ -216,15 +232,22 @@ async def summarize_session(history: list, current_context: str) -> str:
         )
         result = resp.content[0].text.strip()
         log.info("Session summary готовий")
+        try:
+            from core.token_tracker import track as _track_sum
+            su = resp.usage
+            _track_sum(input_tokens=su.input_tokens, output_tokens=su.output_tokens, cache_read=getattr(su, "cache_read_input_tokens", 0), cache_created=getattr(su, "cache_creation_input_tokens", 0), result_type="summary")
+        except Exception as te:
+            log.warning(f"summarize track error: {te}")
         return result
     except Exception as e:
         log.error(f"summarize_session помилка: {e}")
         return current_context
 
 async def ask_ai_with_image_gen(user_id: int, message: str, history: list,
-                                 image_path: str = None, url: str = None):
+                                 image_path: str = None, url: str = None,
+                                 image_paths: list = None):
     from core.token_tracker import track as _track
-    reply, usage = await ask_ai(user_id, message, history, image_path, url)
+    reply, usage = await ask_ai(user_id, message, history, image_path, url, image_paths)
 
     if '```html' in reply:
         log.info("track: html_render")
@@ -246,7 +269,7 @@ async def ask_ai_with_image_gen(user_id: int, message: str, history: list,
     log.info(f"FULL_PROMPT: {gen_prompt}")
     # Не передаємо референс якщо Claude вже описав стиль в промпті
     # (щоб Gemini не копіював композицію, а створював оригінальну)
-    gen_path, err = await generate_image(
+    gen_path, err, g_input, g_output = await generate_image(
         prompt=gen_prompt,
         reference_image_path=None,
         style_hint=None,
@@ -257,7 +280,7 @@ async def ask_ai_with_image_gen(user_id: int, message: str, history: list,
 
     _track(**usage, result_type="image_gen",
            gemini_used=True,
-           gemini_input=len(gen_prompt) // 4,
-           gemini_output=1000)
+           gemini_input=g_input,
+           gemini_output=g_output)
     return reply, str(gen_path)
 

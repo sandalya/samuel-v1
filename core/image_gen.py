@@ -1,16 +1,13 @@
-"""Генерація зображень — OpenRouter → Gemini Flash 2.5."""
+"""Генерація зображень — Google Gemini Flash Image напряму."""
 import logging
-import base64
-import httpx
 import os
 from pathlib import Path
 from datetime import datetime
 
 log = logging.getLogger("core.image_gen")
 
-OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-IMAGE_MODEL = "google/gemini-3.1-flash-image-preview"
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 
 BASE_DIR = Path(__file__).parent.parent
 IMAGES_DIR = BASE_DIR / "memory" / "images"
@@ -23,42 +20,37 @@ ALPHA_TRIGGERS = [
     "isolated", "cutout", "на прозорому",
 ]
 
-
 def _needs_alpha(prompt: str) -> bool:
     return any(tr in prompt.lower() for tr in ALPHA_TRIGGERS)
 
-
 def _remove_background(image_path: Path) -> Path:
     try:
-        from rembg import remove
+        from rembg import remove, new_session
         from PIL import Image
-        from rembg import new_session
         session = new_session("isnet-general-use")
         output = remove(Image.open(image_path), session=session)
         out = image_path.with_name(image_path.stem + "_alpha.png")
         output.save(out, "PNG")
-        log.info(f"rembg OK → {out}")
+        log.info(f"rembg OK -> {out}")
         return out
     except Exception as e:
         log.error(f"rembg error: {e}")
         return image_path
 
-
-def _save_image(b64_data: str, prefix: str = "gen") -> Path:
+def _save_image(data: bytes, prefix: str = "gen") -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = IMAGES_DIR / f"{prefix}_{timestamp}.png"
-    out_path.write_bytes(base64.b64decode(b64_data))
+    out_path.write_bytes(data)
     log.info(f"Збережено: {out_path} ({out_path.stat().st_size // 1024}KB)")
     return out_path
-
 
 async def generate_image(
     prompt: str,
     reference_image_path: str = None,
     style_hint: str = None,
 ) -> tuple:
-    if not OPENROUTER_KEY:
-        return None, "OPENROUTER_API_KEY не знайдено в .env"
+    if not GOOGLE_API_KEY:
+        return None, "GOOGLE_API_KEY не знайдено в .env", 0, 0
 
     wants_alpha = _needs_alpha(prompt)
     if wants_alpha and "transparent" not in prompt.lower():
@@ -72,124 +64,66 @@ async def generate_image(
     }
     full_prompt = style_prefixes.get(style_hint, "") + prompt
 
-    content = []
-    if reference_image_path:
-        ref_path = Path(reference_image_path)
-        if ref_path.exists():
-            try:
-                raw = ref_path.read_bytes()
-                b64 = base64.b64encode(raw).decode()
-                suffix = ref_path.suffix.lower()
-                media_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                               ".png": "image/png", ".webp": "image/webp"}
-                media_type = media_types.get(suffix, "image/png")
-                content.append({"type": "image_url",
-                                 "image_url": {"url": f"data:{media_type};base64,{b64}"}})
-            except Exception as e:
-                log.warning(f"Референс не додано: {e}")
-
-    content.append({"type": "text", "text": full_prompt})
-
-    payload = {
-        "model": IMAGE_MODEL,
-        "messages": [{"role": "user", "content": content}],
-        "modalities": ["text", "image"],
-        "image_generation_config": {"quality": "standard"},
-    }
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/sandalya/samuel-v1",
-        "X-Title": "Samuel Design Assistant",
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=90.0) as http:
-            log.info(f"Генерація FULL: '{full_prompt}'")
-            open("/tmp/last_gen_prompt.txt", "w").write(full_prompt)
-            resp = await http.post(OPENROUTER_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        from google import genai
+        from google.genai import types
 
-        choices = data.get("choices", [])
-        if not choices:
-            return None, "OpenRouter повернув порожню відповідь"
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        contents = []
 
-        raw_message = choices[0].get("message", {})
+        if reference_image_path:
+            ref_path = Path(reference_image_path)
+            if ref_path.exists():
+                try:
+                    raw = ref_path.read_bytes()
+                    suffix = ref_path.suffix.lower()
+                    media_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                                   ".png": "image/png", ".webp": "image/webp"}
+                    media_type = media_types.get(suffix, "image/png")
+                    contents.append(types.Part.from_bytes(data=raw, mime_type=media_type))
+                except Exception as e:
+                    log.warning(f"Референс не додано: {e}")
+
+        contents.append(full_prompt)
+        log.info(f"Генерація: {full_prompt[:100]}")
+
+        response = await client.aio.models.generate_content(
+            model=IMAGE_MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_modalities=["Text", "Image"],
+            ),
+        )
+
         result_path = None
-
-        # Формат 1: message['images']
-        images = raw_message.get("images") or []
-        for img in images:
-            if img.get("type") == "image_url":
-                url = img.get("image_url", {}).get("url", "")
-                if url.startswith("data:image"):
-                    result_path = _save_image(url.split(",", 1)[1])
-                    break
-                elif url:
-                    async with httpx.AsyncClient(timeout=30.0) as http:
-                        img_resp = await http.get(url)
-                        img_resp.raise_for_status()
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    result_path = IMAGES_DIR / f"gen_{timestamp}.png"
-                    result_path.write_bytes(img_resp.content)
-                    break
-
-        # Формат 2: message['content'] blocks
-        if result_path is None:
-            response_content = raw_message.get("content") or []
-            if isinstance(response_content, str):
-                return None, f"Модель повернула текст: {response_content[:200]}"
-            for block in response_content:
-                if block.get("type") == "image_url":
-                    url = block["image_url"]["url"]
-                    if url.startswith("data:image"):
-                        result_path = _save_image(url.split(",", 1)[1])
-                    else:
-                        async with httpx.AsyncClient(timeout=30.0) as http:
-                            img_resp = await http.get(url)
-                            img_resp.raise_for_status()
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        result_path = IMAGES_DIR / f"gen_{timestamp}.png"
-                        result_path.write_bytes(img_resp.content)
-                    break
-                if block.get("type") == "image":
-                    b64_data = block.get("data") or block.get("source", {}).get("data", "")
-                    if b64_data:
-                        result_path = _save_image(b64_data)
-                        break
+        for part in response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                result_path = _save_image(part.inline_data.data)
+                break
 
         if result_path is None:
-            log.warning(f"Невідомий формат: {str(data)[:500]}")
-            return None, "Зображення не знайдено у відповіді моделі"
+            log.warning("Зображення не знайдено у відповіді")
+            return None, "Зображення не знайдено у відповіді моделі", 0, 0
 
-        # Постобробка: видалення фону
+        usage = response.usage_metadata
+        real_input = getattr(usage, "prompt_token_count", 0) or 0
+        real_output = getattr(usage, "candidates_token_count", 0) or 0
+        log.info(f"Google usage: input={real_input} output={real_output}")
+
         if wants_alpha:
             result_path = _remove_background(result_path)
 
-        return result_path, ""
+        return result_path, "", real_input, real_output
 
-    except httpx.HTTPStatusError as e:
-        log.error(f"HTTP {e.response.status_code}")
-        if e.response.status_code == 401:
-            return None, "Невірний OPENROUTER_API_KEY"
-        if e.response.status_code == 402:
-            return None, "Недостатньо кредитів на OpenRouter"
-        if e.response.status_code == 429:
-            return None, "Rate limit, спробуй за хвилину"
-        return None, f"Помилка сервісу ({e.response.status_code})"
-    except httpx.TimeoutException:
-        return None, "Таймаут генерації"
     except Exception as e:
         log.error(f"image_gen помилка: {e}")
-        return None, "Технічна помилка генерації"
-
+        return None, f"Технічна помилка генерації: {e}", 0, 0
 
 def detect_image_intent(message: str, reference_image_path: str = None) -> tuple:
     msg = message.lower()
     triggers = [
         "намалюй", "згенеруй", "створи зображення", "зроби картинку",
-        "generate image", "generate", "draw me", "зроби фото", "реалістичне фото", "реалістичн",
+        "generate image", "generate", "draw me", "зроби фото", "реалістичне фото",
         "мудборд", "moodboard", "ілюстрація", "render", "візуалізуй",
         "покажи як виглядає", "color variation", "colour variation", "варіац",
         "в іншому кольорі", "recolor", "remake", "зроби схожий", "same style",

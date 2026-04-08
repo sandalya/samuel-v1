@@ -114,7 +114,28 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-def process_ai_response(text: str, base_name: str = "samuel") -> dict:
+def inject_images_base64(html: str, image_paths: list) -> str:
+    """Замінює photo1.jpg, photo2.jpg тощо на реальний base64."""
+    import base64
+    for i, img_path in enumerate(image_paths, 1):
+        try:
+            path = Path(img_path)
+            raw = path.read_bytes()
+            suffix = path.suffix.lower()
+            mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".png": "image/png", ".webp": "image/webp"}.get(suffix, "image/jpeg")
+            b64 = base64.standard_b64encode(raw).decode()
+            data_url = f"data:{mime};base64,{b64}"
+            for placeholder in [f"photo{i}.jpg", f"photo{i}.png",
+                                  f"image{i}.jpg", f"image{i}.png",
+                                  f"img{i}.jpg", f"img{i}.png"]:
+                html = html.replace(f'src="{placeholder}"', f'src="{data_url}"')
+                html = html.replace(f"src='{placeholder}'", f"src='{data_url}'")
+        except Exception as e:
+            log.warning(f"inject_images_base64 {i}: {e}")
+    return html
+
+def process_ai_response(text: str, base_name: str = "samuel", image_paths: list = None) -> dict:
     result = {
         "text": clean_text(text),
         "svg_paths": [],
@@ -137,6 +158,10 @@ def process_ai_response(text: str, base_name: str = "samuel") -> dict:
         safe = re.sub(r"[^a-zA-Z0-9_]", "_", name)[:30]
         png_path = str(tmp_dir / f"{base_name}_{i+1}_{safe}.png")
 
+        if image_paths:
+            html = inject_images_base64(html, image_paths)
+
+        log.info(f"HTML перед рендером (перші 300): {html[:300]}")
         if html_to_png(html, png_path):
             result["png_paths"].append((name, png_path))
             result["has_visual"] = True

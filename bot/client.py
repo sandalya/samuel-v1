@@ -64,14 +64,15 @@ async def flush_buffer(user_id: int, update: Update, ctx: ContextTypes.DEFAULT_T
     if not buf:
         return
     message = buf.get("text", "")
-    image_path = buf.get("image_path")
+    image_paths = buf.get("image_paths", [])
+    image_path = image_paths[0] if image_paths else buf.get("image_path")
     url_match = re.search(r"https?://\S+", message) if message else None
     url = url_match.group(0) if url_match else None
     # Пряме видалення фону якщо є зображення + alpha trigger
     if image_path and _is_alpha_request(message or ""):
         await _handle_direct_rembg(update, image_path)
         return
-    await _process_and_reply(update, ctx, user_id, message, image_path=image_path, url=url)
+    await _process_and_reply(update, ctx, user_id, message, image_paths=image_paths, url=url)
 
 
 def _cancel_buffer(user_id: int):
@@ -81,14 +82,26 @@ def _cancel_buffer(user_id: int):
 
 async def _add_to_buffer_and_schedule(user_id: int, update: Update,
                                        ctx: ContextTypes.DEFAULT_TYPE,
-                                       text: str = "", image_path: str = None):
-    _cancel_buffer(user_id)
+                                       text: str = "", image_path: str = None,
+                                       media_group_id: str = None):
     buf = buffers.setdefault(user_id, {})
+    same_group = media_group_id and buf.get("media_group_id") == media_group_id
+    if not same_group:
+        _cancel_buffer(user_id)
+        buf = buffers.setdefault(user_id, {})
     if text:
         buf["text"] = (buf.get("text", "") + " " + text).strip()
     if image_path:
-        buf["image_path"] = image_path
+        paths = buf.get("image_paths", [])
+        if image_path not in paths:
+            paths.append(image_path)
+        buf["image_paths"] = paths
+        buf["image_path"] = paths[0]  # backward compat
+    if media_group_id:
+        buf["media_group_id"] = media_group_id
     buf["update"] = update
+    if buf.get("task"):
+        buf["task"].cancel()
     task = asyncio.create_task(flush_buffer(user_id, update, ctx))
     buf["task"] = task
 
@@ -163,27 +176,34 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _get_reply_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user_id: int) -> str | None:
-    """Витягує зображення з reply_to_message якщо є."""
+    """Витягує перше зображення з reply_to_message якщо є."""
+    paths = await _get_reply_images(update, ctx, user_id)
+    return paths[0] if paths else None
+
+async def _get_reply_images(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user_id: int) -> list:
+    """Витягує всі зображення з reply_to_message включно з media_group."""
     reply = update.message.reply_to_message
     if not reply:
-        return None
-    # reply на фото
-    if reply.photo:
-        photo = reply.photo[-1]
-        file = await ctx.bot.get_file(photo.file_id)
-        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_reply_{user_id}.jpg")
-        await file.download_to_drive(tmp_path)
-        log.info(f"Reply image завантажено: {tmp_path}")
-        return tmp_path
+        return []
+    results = []
     # reply на документ-зображення
     if reply.document and reply.document.mime_type and reply.document.mime_type.startswith("image/"):
         file = await ctx.bot.get_file(reply.document.file_id)
         suffix = Path(reply.document.file_name).suffix if reply.document.file_name else ".png"
-        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_reply_{user_id}{suffix}")
+        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_reply_{user_id}_0{suffix}")
         await file.download_to_drive(tmp_path)
-        log.info(f"Reply document image завантажено: {tmp_path}")
-        return tmp_path
-    return None
+        results.append(tmp_path)
+        log.info(f"Reply document image: {tmp_path}")
+        return results
+    # reply на фото — беремо найбільше
+    if reply.photo:
+        photo = reply.photo[-1]
+        file = await ctx.bot.get_file(photo.file_id)
+        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_reply_{user_id}_0.jpg")
+        await file.download_to_drive(tmp_path)
+        results.append(tmp_path)
+        log.info(f"Reply image 1: {tmp_path}")
+    return results
 
 async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -196,8 +216,10 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         caption = f"{forward_info}\n{caption}".strip()
 
     photo = update.message.photo[-1]
+    log.info(f"Photo sizes: {[(p.width, p.height, p.file_size) for p in update.message.photo]}")
     file = await ctx.bot.get_file(photo.file_id)
-    tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_in_{user.id}.jpg")
+    import time as _time
+    tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_in_{user.id}_{int(_time.time()*1000)}.jpg")
     await file.download_to_drive(tmp_path)
 
     if user.id in learn_mode:
@@ -214,7 +236,9 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     reply_image = await _get_reply_image(update, ctx, user.id)
     final_image = reply_image or tmp_path
-    await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=final_image)
+    media_group_id = update.message.media_group_id
+    log.info(f"handle_photo: user={user.id} media_group_id={media_group_id} path={final_image}")
+    await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=final_image, media_group_id=media_group_id)
 
 
 async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -232,11 +256,14 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if doc.mime_type and doc.mime_type.startswith("image/"):
         file = await ctx.bot.get_file(doc.file_id)
         suffix = Path(doc.file_name).suffix if doc.file_name else ".png"
-        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_doc_{user.id}{suffix}")
+        import time as _time
+        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_doc_{user.id}_{int(_time.time()*1000)}{suffix}")
         await file.download_to_drive(tmp_path)
         reply_image = await _get_reply_image(update, ctx, user.id)
         final_image = reply_image or tmp_path
-        await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=final_image)
+        media_group_id = update.message.media_group_id
+        log.info(f"handle_document: media_group_id={media_group_id} path={tmp_path} size={Path(tmp_path).stat().st_size}")
+        await _add_to_buffer_and_schedule(user.id, update, ctx, text=caption, image_path=final_image, media_group_id=media_group_id)
     else:
         # Не-зображення — передаємо як текст з описом
         file_desc = f"[Файл: {doc.file_name or 'без назви'}, тип: {doc.mime_type or 'невідомий'}]"
@@ -323,7 +350,13 @@ async def _maybe_summarize(user_id: int):
 
 async def _process_and_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user_id: int,
                               message: str, image_path: str = None,
+                              image_paths: list = None,
                               url: str = None):
+    # Якщо є список — використовуємо його, інакше single image
+    if not image_paths and image_path:
+        image_paths = [image_path]
+    elif not image_paths:
+        image_paths = []
     await _maybe_summarize(user_id)
     last_activity[user_id] = time.time()
     history = conversations.setdefault(user_id, [])
@@ -342,7 +375,8 @@ async def _process_and_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, use
             user_id=user_id,
             message=message,
             history=history,
-            image_path=image_path,
+            image_path=image_paths[0] if image_paths else None,
+            image_paths=image_paths,
             url=url
         )
     finally:
@@ -352,7 +386,7 @@ async def _process_and_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, use
     history.append({"role": "user", "content": f"{'[image] ' if image_path else ''}{message}"})
     history.append({"role": "assistant", "content": reply})
 
-    result = process_ai_response(reply, base_name=f"samuel_{user_id}")
+    result = process_ai_response(reply, base_name=f"samuel_{user_id}", image_paths=image_paths)
 
     if result["has_visual"] and result["png_paths"] and not gen_image_path:
         try:
