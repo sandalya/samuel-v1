@@ -201,7 +201,7 @@ async def summarize_session(history: list, current_context: str) -> str:
         f"{m['role'].upper()}: {m['content'][:200]}"
         for m in history[-20:]
     ])
-    prompt = f"""Ти оновлюєш rolling context для дизайн-асистента Семюеля.
+    prompt = f"""Ти оновлюєш rolling context для дизайн-асистента Еббі.
 
 Поточний context:
 {current_context or "(порожній)"}
