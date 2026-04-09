@@ -383,7 +383,8 @@ async def _process_and_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, use
         stop_typing[0] = True
         typing_task.cancel()
 
-    history.append({"role": "user", "content": f"{'[image] ' if image_path else ''}{message}"})
+    user_content = f"{'[image] ' if (image_paths or image_path) else ''}{message or ''}".strip()
+    history.append({"role": "user", "content": user_content or "[зображення]"})
     history.append({"role": "assistant", "content": reply})
 
     result = process_ai_response(reply, base_name=f"samuel_{user_id}", image_paths=image_paths)

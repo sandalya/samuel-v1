@@ -153,6 +153,9 @@ async def ask_ai(user_id: int, message: str, history: list,
 
         if not content:
             content.append({"type": "text", "text": "?"})
+        # Гарантуємо що є текстовий блок якщо є тільки зображення
+        elif not any(b.get("type") == "text" for b in content):
+            content.append({"type": "text", "text": "Проаналізуй це зображення."})
 
         messages = optimized + [{"role": "user", "content": content}]
 
