@@ -190,7 +190,7 @@ async def _get_reply_images(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user
     if reply.document and reply.document.mime_type and reply.document.mime_type.startswith("image/"):
         file = await ctx.bot.get_file(reply.document.file_id)
         suffix = Path(reply.document.file_name).suffix if reply.document.file_name else ".png"
-        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_reply_{user_id}_0{suffix}")
+        tmp_path = os.path.join(tempfile.gettempdir(), f"abby_reply_{user_id}_0{suffix}")
         await file.download_to_drive(tmp_path)
         results.append(tmp_path)
         log.info(f"Reply document image: {tmp_path}")
@@ -199,7 +199,7 @@ async def _get_reply_images(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user
     if reply.photo:
         photo = reply.photo[-1]
         file = await ctx.bot.get_file(photo.file_id)
-        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_reply_{user_id}_0.jpg")
+        tmp_path = os.path.join(tempfile.gettempdir(), f"abby_reply_{user_id}_0.jpg")
         await file.download_to_drive(tmp_path)
         results.append(tmp_path)
         log.info(f"Reply image 1: {tmp_path}")
@@ -219,7 +219,7 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     log.info(f"Photo sizes: {[(p.width, p.height, p.file_size) for p in update.message.photo]}")
     file = await ctx.bot.get_file(photo.file_id)
     import time as _time
-    tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_in_{user.id}_{int(_time.time()*1000)}.jpg")
+    tmp_path = os.path.join(tempfile.gettempdir(), f"abby_in_{user.id}_{int(_time.time()*1000)}.jpg")
     await file.download_to_drive(tmp_path)
 
     if user.id in learn_mode:
@@ -257,7 +257,7 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         file = await ctx.bot.get_file(doc.file_id)
         suffix = Path(doc.file_name).suffix if doc.file_name else ".png"
         import time as _time
-        tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_doc_{user.id}_{int(_time.time()*1000)}{suffix}")
+        tmp_path = os.path.join(tempfile.gettempdir(), f"abby_doc_{user.id}_{int(_time.time()*1000)}{suffix}")
         await file.download_to_drive(tmp_path)
         reply_image = await _get_reply_image(update, ctx, user.id)
         final_image = reply_image or tmp_path
@@ -279,7 +279,7 @@ async def handle_sticker(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sticker = update.message.sticker
     file = await ctx.bot.get_file(sticker.file_id)
     suffix = ".webp"
-    tmp_path = os.path.join(tempfile.gettempdir(), f"samuel_sticker_{user.id}{suffix}")
+    tmp_path = os.path.join(tempfile.gettempdir(), f"abby_sticker_{user.id}{suffix}")
     await file.download_to_drive(tmp_path)
     # Конвертуємо webp → jpg для Claude
     try:
@@ -387,7 +387,7 @@ async def _process_and_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, use
     history.append({"role": "user", "content": user_content or "[зображення]"})
     history.append({"role": "assistant", "content": reply})
 
-    result = process_ai_response(reply, base_name=f"samuel_{user_id}", image_paths=image_paths)
+    result = process_ai_response(reply, base_name=f"abby_{user_id}", image_paths=image_paths)
 
     if result["has_visual"] and result["png_paths"] and not gen_image_path:
         try:

@@ -1,4 +1,4 @@
-"""Samuel v1 — дизайн-асистент Ксюші."""
+"""Abby — дизайн-асистент Ксюші."""
 import logging
 from core.lock import acquire_lock, release_lock
 import sys
@@ -32,7 +32,7 @@ def main():
 
     from bot.client import setup_handlers
 
-    log.info("Samuel v1 стартує...")
+    log.info("Abby стартує...")
 
     app = (
         Application.builder()

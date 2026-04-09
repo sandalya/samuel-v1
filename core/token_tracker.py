@@ -1,4 +1,4 @@
-"""Трекер токенів і вартості для Samuel v1."""
+"""Трекер токенів і вартості для Abby."""
 import json
 import logging
 from datetime import datetime, timedelta

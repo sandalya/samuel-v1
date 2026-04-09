@@ -135,7 +135,7 @@ def inject_images_base64(html: str, image_paths: list) -> str:
             log.warning(f"inject_images_base64 {i}: {e}")
     return html
 
-def process_ai_response(text: str, base_name: str = "samuel", image_paths: list = None) -> dict:
+def process_ai_response(text: str, base_name: str = "abby", image_paths: list = None) -> dict:
     result = {
         "text": clean_text(text),
         "svg_paths": [],
@@ -143,7 +143,7 @@ def process_ai_response(text: str, base_name: str = "samuel", image_paths: list 
         "has_visual": False
     }
 
-    tmp_dir = Path(tempfile.gettempdir()) / "samuel"
+    tmp_dir = Path(tempfile.gettempdir()) / "abby"
     tmp_dir.mkdir(exist_ok=True)
 
     blocks = extract_all_html(text)

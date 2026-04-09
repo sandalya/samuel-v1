@@ -4,7 +4,7 @@ import base64
 import anthropic
 from pathlib import Path
 from core.config import ANTHROPIC_KEY
-from core.prompt import SAMUEL_SYSTEM_PROMPT
+from core.prompt import ABBY_SYSTEM_PROMPT
 from core.memory import load_memory, load_context
 from core.image_gen import generate_image, detect_image_intent
 
@@ -48,7 +48,7 @@ def build_system_blocks() -> list:
     # Блок 1: базовий промпт — завжди статичний, кешуємо
     blocks.append({
         "type": "text",
-        "text": SAMUEL_SYSTEM_PROMPT,
+        "text": ABBY_SYSTEM_PROMPT,
         "cache_control": {"type": "ephemeral"}
     })
 
