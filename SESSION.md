@@ -1,13 +1,13 @@
-# SESSION — 2026-04-12 14:51
+# SESSION — 2026-04-12 14:59
 
 ## Проект
 abby
 
 ## Що зробили
-додано _strip_synthid() в core/image_gen.py — PIL GaussianBlur+UnsharpMask+noise±2, виклик після _save_image перед _remove_background, тест підтвердив SynthID strip OK в логах
+_strip_synthid оновлено: PNG→JPG quality=93, шум підвищено до ±4, metadata чиста (PNG chunks {})
 
 ## Наступний крок
-нічого, фіча завершена
+через тиждень оцінити якість і при потребі знизити шум до ±2
 
 ## Контекст
-правильний шлях /home/sashok/.openclaw/workspace/abby/core/image_gen.py
+файл /home/sashok/.openclaw/workspace/abby/core/image_gen.py

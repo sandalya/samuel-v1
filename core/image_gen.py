@@ -55,13 +55,13 @@ def _strip_synthid(image_path: Path) -> Path:
         blurred = rgb.filter(ImageFilter.GaussianBlur(radius=0.4))
         sharpened = blurred.filter(ImageFilter.UnsharpMask(radius=0.4, percent=120, threshold=2))
         arr = np.array(sharpened, dtype=np.int16)
-        noise = np.random.randint(-2, 3, arr.shape, dtype=np.int16)
+        noise = np.random.randint(-4, 5, arr.shape, dtype=np.int16)
         arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
         result = Image.fromarray(arr)
         if img.mode == "RGBA":
             result = result.convert("RGBA")
-        out_path = image_path.with_name(image_path.stem + "_c.png")
-        result.save(out_path, "PNG")
+        out_path = image_path.with_name(image_path.stem + "_c.jpg")
+        result.convert("RGB").save(out_path, "JPEG", quality=93, optimize=True)
         image_path.unlink()
         log.info(f"SynthID strip OK -> {out_path}")
         return out_path
