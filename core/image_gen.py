@@ -44,6 +44,31 @@ def _save_image(data: bytes, prefix: str = "gen") -> Path:
     log.info(f"Збережено: {out_path} ({out_path.stat().st_size // 1024}KB)")
     return out_path
 
+
+def _strip_synthid(image_path: Path) -> Path:
+    """Руйнує SynthID патерн через мікро-обробку. Візуально без змін."""
+    try:
+        from PIL import Image, ImageFilter
+        import numpy as np
+        img = Image.open(image_path).convert("RGBA")
+        rgb = img.convert("RGB")
+        blurred = rgb.filter(ImageFilter.GaussianBlur(radius=0.4))
+        sharpened = blurred.filter(ImageFilter.UnsharpMask(radius=0.4, percent=120, threshold=2))
+        arr = np.array(sharpened, dtype=np.int16)
+        noise = np.random.randint(-2, 3, arr.shape, dtype=np.int16)
+        arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+        result = Image.fromarray(arr)
+        if img.mode == "RGBA":
+            result = result.convert("RGBA")
+        out_path = image_path.with_name(image_path.stem + "_c.png")
+        result.save(out_path, "PNG")
+        image_path.unlink()
+        log.info(f"SynthID strip OK -> {out_path}")
+        return out_path
+    except Exception as e:
+        log.warning(f"SynthID strip skip: {e}")
+        return image_path
+
 async def generate_image(
     prompt: str,
     reference_image_path: str = None,
@@ -109,6 +134,8 @@ async def generate_image(
         real_input = getattr(usage, "prompt_token_count", 0) or 0
         real_output = getattr(usage, "candidates_token_count", 0) or 0
         log.info(f"Google usage: input={real_input} output={real_output}")
+
+        result_path = _strip_synthid(result_path)
 
         if wants_alpha:
             result_path = _remove_background(result_path)

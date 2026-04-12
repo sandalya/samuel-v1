@@ -1,13 +1,13 @@
-# SESSION — 2026-04-09
+# SESSION — 2026-04-12 14:51
 
 ## Проект
-abby (Еббі, samuel-v1)
+abby
 
 ## Що зробили
-Бот стабільний. Клієнт Ксюша — дизайнер, зараз робить sports betting банери Celtic FC. Остання робота: заміна тренера на Martin O'Neill за фото-референсом.
+додано _strip_synthid() в core/image_gen.py — PIL GaussianBlur+UnsharpMask+noise±2, виклик після _save_image перед _remove_background, тест підтвердив SynthID strip OK в логах
 
 ## Наступний крок
-TODO: /scale команда для вибору якості PNG (2x, 4x, 6x)
+нічого, фіча завершена
 
 ## Контекст
-systemd: samuel-v1 | memory/context.md — повний профіль Ксюші та патерни роботи
+правильний шлях /home/sashok/.openclaw/workspace/abby/core/image_gen.py
