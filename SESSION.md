@@ -1,13 +1,13 @@
-# SESSION — 2026-04-12 14:59
+# SESSION — 2026-04-12 18:40
 
 ## Проект
 abby
 
 ## Що зробили
-_strip_synthid оновлено: PNG→JPG quality=93, шум підвищено до ±4, metadata чиста (PNG chunks {})
+запушено _strip_synthid пост-обробку в git, оновлено GitHub токен з kit/.env
 
 ## Наступний крок
-через тиждень оцінити якість і при потребі знизити шум до ±2
+через тиждень оцінити якість зображень візуально
 
 ## Контекст
-файл /home/sashok/.openclaw/workspace/abby/core/image_gen.py
+repo sandalya/abby-v1, токен береться з kit/.env
